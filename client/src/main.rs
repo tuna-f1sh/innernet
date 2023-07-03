@@ -101,6 +101,18 @@ enum Command {
         nat: NatOpts,
     },
 
+    /// Redeem the invite to a .conf rather than installing for this client. For use with Vanilla WireGuard clients.
+    Export {
+        /// Path to the invitation file
+        invite: PathBuf,
+
+        #[clap(flatten)]
+        install_opts: InstallOpts,
+
+        /// Output path for the .conf file
+        config: PathBuf,
+    },
+
     /// Enumerate all innernet connections
     #[clap(alias = "list")]
     Show {
@@ -430,6 +442,47 @@ fn install(
             daemon_mode = "innernet up -d --interval 60".yellow()
         );
     }
+    Ok(())
+}
+
+fn export_invite(
+    opts: &Opts,
+    invite: &Path,
+    install_opts: InstallOpts,
+    target_conf: PathBuf,
+) -> Result<(), Error> {
+    let config = InterfaceConfig::from_file(invite)?;
+
+    let iface = if install_opts.default_name {
+        config.interface.network_name.clone()
+    } else if let Some(ref iface) = install_opts.name {
+        iface.clone()
+    } else {
+        Input::with_theme(&*prompts::THEME)
+            .with_prompt("Interface name")
+            .default(config.interface.network_name.clone())
+            .interact()?
+    };
+
+    if target_conf.exists() {
+        bail!(
+            "\"{}\" already exists.",
+            iface
+        );
+    }
+
+    let iface = iface.parse()?;
+
+    redeem_invite(&iface, config, target_conf, opts.network).map_err(|e| {
+        log::error!("failed to start the interface: {}.", e);
+        log::info!("bringing down the interface.");
+        if let Err(e) = wg::down(&iface, opts.network.backend) {
+            log::warn!("failed to bring down interface: {}.", e.to_string());
+        };
+        log::error!("Failed to redeem invite. Now's a good time to make sure the server is started and accessible!");
+        e
+    })?;
+
     Ok(())
 }
 
@@ -1203,6 +1256,11 @@ fn run(opts: &Opts) -> Result<(), Error> {
             install_opts,
             nat,
         } => install(opts, &invite, hosts.into(), install_opts, &nat)?,
+        Command::Export {
+            invite,
+            install_opts,
+            config,
+        } => export_invite(opts, &invite, install_opts, config)?,
         Command::Show {
             short,
             tree,
