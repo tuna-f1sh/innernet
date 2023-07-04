@@ -101,16 +101,18 @@ enum Command {
         nat: NatOpts,
     },
 
-    /// Redeem the invite to a .conf rather than installing for this client. For use with Vanilla WireGuard clients.
+    /// Redeem the invite but do not install for this client. For use with
+    /// Vanilla WireGuard clients.
     Export {
         /// Path to the invitation file
         invite: PathBuf,
 
-        #[clap(flatten)]
-        install_opts: InstallOpts,
+        /// Delete the invitation after a successful install
+        #[clap(short, long)]
+        delete_invite: bool,
 
-        /// Output path for the .conf file
-        config: PathBuf,
+        /// Output path for the config, default is invite{.toml,.conf}
+        config: Option<PathBuf>,
     },
 
     /// Enumerate all innernet connections
@@ -448,32 +450,33 @@ fn install(
 fn export_invite(
     opts: &Opts,
     invite: &Path,
-    install_opts: InstallOpts,
-    target_conf: PathBuf,
+    output: Option<PathBuf>,
+    delete_invite: bool,
 ) -> Result<(), Error> {
     let config = InterfaceConfig::from_file(invite)?;
 
-    let iface = if install_opts.default_name {
-        config.interface.network_name.clone()
-    } else if let Some(ref iface) = install_opts.name {
-        iface.clone()
-    } else {
-        Input::with_theme(&*prompts::THEME)
-            .with_prompt("Interface name")
-            .default(config.interface.network_name.clone())
-            .interact()?
-    };
+    let iface = format!("{}-temp", &config.interface.network_name);
+
+    // target_conf is output if supplied or invite with .toml replaced with .conf
+    let target_conf: PathBuf = output
+        .unwrap_or_else(|| {
+            let mut pb = invite.to_path_buf();
+            pb.set_extension("conf");
+            pb
+        });
 
     if target_conf.exists() {
         bail!(
             "\"{}\" already exists.",
-            iface
+            target_conf.to_string_lossy().yellow()
         );
     }
 
     let iface = iface.parse()?;
 
-    redeem_invite(&iface, config, target_conf, opts.network).map_err(|e| {
+    redeem_invite(&iface, config, target_conf, opts.network)
+        .and(wg::down(&iface, opts.network.backend))
+        .map_err(|e| {
         log::error!("failed to start the interface: {}.", e);
         log::info!("bringing down the interface.");
         if let Err(e) = wg::down(&iface, opts.network.backend) {
@@ -482,6 +485,19 @@ fn export_invite(
         log::error!("Failed to redeem invite. Now's a good time to make sure the server is started and accessible!");
         e
     })?;
+
+    if delete_invite
+        || Confirm::with_theme(&*prompts::THEME)
+            .wait_for_newline(true)
+            .with_prompt(&format!(
+                "Delete invitation file \"{}\" now? (It's no longer needed)",
+                invite.to_string_lossy().yellow()
+            ))
+            .default(true)
+            .interact()?
+    {
+        std::fs::remove_file(invite).with_path(invite)?;
+    }
 
     Ok(())
 }
@@ -1258,9 +1274,9 @@ fn run(opts: &Opts) -> Result<(), Error> {
         } => install(opts, &invite, hosts.into(), install_opts, &nat)?,
         Command::Export {
             invite,
-            install_opts,
+            delete_invite,
             config,
-        } => export_invite(opts, &invite, install_opts, config)?,
+        } => export_invite(opts, &invite, config, delete_invite)?,
         Command::Show {
             short,
             tree,
