@@ -1,4 +1,4 @@
-use crate::{chmod, ensure_dirs_exist, Endpoint, Error, IoErrorContext, WrappedIoError};
+use crate::{chmod, ensure_dirs_exist, Endpoint, Error, IoErrorContext, WrappedIoError, PERSISTENT_KEEPALIVE_INTERVAL_SECS};
 use indoc::writedoc;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -6,9 +6,10 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     net::SocketAddr,
+    str::FromStr,
     path::{Path, PathBuf},
 };
-use wireguard_control::InterfaceName;
+use wireguard_control::{InterfaceName, PeerConfigBuilder, DeviceBuilder, PeerConfig, Device};
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(rename_all = "kebab-case")]
@@ -18,6 +19,27 @@ pub struct InterfaceConfig {
 
     /// The necessary contact information for the server.
     pub server: ServerInfo,
+}
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct VanillaConfig {
+    pub interface: Device,
+    pub peer: PeerConfig,
+}
+
+impl TryFrom<InterfaceConfig> for VanillaConfig {
+    type Error = Error;
+
+    fn try_from(config: InterfaceConfig) -> Result<Self, Self::Error> {
+        let interface = DeviceBuilder::try_from(&config.interface)?;
+        let peer = PeerConfigBuilder::try_from(&config.server)?;
+
+        Ok(VanillaConfig {
+            interface: interface.into_device(),
+            peer: peer.into_peer_config(),
+        })
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
@@ -37,6 +59,18 @@ pub struct InterfaceInfo {
     pub listen_port: Option<u16>,
 }
 
+impl TryFrom<&InterfaceInfo> for DeviceBuilder {
+    type Error = Error;
+
+    fn try_from(interface: &InterfaceInfo) -> Result<Self, Self::Error> {
+        let mut builder = DeviceBuilder::new(&InterfaceName::from_str(&interface.network_name)?);
+        builder = builder.set_private_key(wireguard_control::Key::from_base64(&interface.private_key)?);
+        builder = builder.set_listen_port(interface.listen_port.unwrap_or(0));
+
+        Ok(builder)
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct ServerInfo {
@@ -48,6 +82,18 @@ pub struct ServerInfo {
 
     /// An internal endpoint in the WireGuard network that hosts the coordination API.
     pub internal_endpoint: SocketAddr,
+}
+
+impl TryFrom<&ServerInfo> for PeerConfigBuilder {
+    type Error = Error;
+
+    fn try_from(server: &ServerInfo) -> Result<Self, Self::Error> {
+        let mut builder = PeerConfigBuilder::new(&wireguard_control::Key::from_base64(&server.public_key)?);
+        builder = builder.set_endpoint(server.external_endpoint.clone().try_into()?);
+        builder = builder.set_persistent_keepalive_interval(PERSISTENT_KEEPALIVE_INTERVAL_SECS);
+
+        Ok(builder)
+    }
 }
 
 impl InterfaceConfig {
@@ -143,5 +189,35 @@ impl InterfaceInfo {
         Ok(wireguard_control::Key::from_base64(&self.private_key)?
             .get_public()
             .to_base64())
+    }
+}
+
+impl VanillaConfig {
+    pub fn write_to(
+        &self,
+        target_file: &mut File,
+        mode: Option<u32>,
+    ) -> Result<(), io::Error> {
+        if let Some(val) = mode {
+            chmod(target_file, val)?;
+        }
+
+        target_file.write_all(toml::to_string(self).unwrap().as_bytes())?;
+        Ok(())
+    }
+
+    pub fn write_to_path<P: AsRef<Path>>(
+        &self,
+        path: P,
+        mode: Option<u32>,
+    ) -> Result<(), WrappedIoError> {
+        let path = path.as_ref();
+        let mut target_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)
+            .with_path(path)?;
+        self.write_to(&mut target_file, mode)
+            .with_path(path)
     }
 }

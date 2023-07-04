@@ -1626,6 +1626,7 @@ dependencies = [
  "netlink-request",
  "netlink-sys",
  "rand_core",
+ "serde",
  "x25519-dalek",
 ]
 

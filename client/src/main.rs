@@ -6,7 +6,7 @@ use hostsfile::HostsBuilder;
 use indoc::eprintdoc;
 use shared::{
     get_local_addrs,
-    interface_config::InterfaceConfig,
+    interface_config::InterfaceConfig, interface_config::VanillaConfig,
     prompts,
     wg::{DeviceExt, PeerInfoExt},
     AddCidrOpts, AddDeleteAssociationOpts, AddPeerOpts, Association, AssociationContents, Cidr,
@@ -103,7 +103,7 @@ enum Command {
 
     /// Redeem the invite but do not install for this client. For use with
     /// Vanilla WireGuard clients.
-    Export {
+    VanillaRedeem {
         /// Path to the invitation file
         invite: PathBuf,
 
@@ -172,6 +172,18 @@ enum Command {
 
     /// Bring down the interface (equivalent to 'wg-quick down <interface>')
     Down { interface: Interface },
+
+    /// Export an innernet network as a WireGuard config. Will uninstall the innernet after export!
+    VanillaExport { 
+        interface: Interface,
+
+        /// Bypass confirmation
+        #[clap(long)]
+        yes: bool,
+
+        /// Output path for the exported WireGuard config
+        config: PathBuf,
+    },
 
     /// Add a new peer
     ///
@@ -447,7 +459,7 @@ fn install(
     Ok(())
 }
 
-fn export_invite(
+fn vanilla_invite(
     opts: &Opts,
     invite: &Path,
     output: Option<PathBuf>,
@@ -474,7 +486,7 @@ fn export_invite(
 
     let iface = iface.parse()?;
 
-    redeem_invite(&iface, config, target_conf, opts.network)
+    redeem_invite(&iface, config.clone(), target_conf.clone(), opts.network)
         .and(wg::down(&iface, opts.network.backend))
         .map_err(|e| {
         log::error!("failed to start the interface: {}.", e);
@@ -485,6 +497,9 @@ fn export_invite(
         log::error!("Failed to redeem invite. Now's a good time to make sure the server is started and accessible!");
         e
     })?;
+
+    let vanilla: VanillaConfig = config.try_into()?;
+    vanilla.write_to_path(&target_conf, Some(0o600))?;
 
     if delete_invite
         || Confirm::with_theme(&*prompts::THEME)
@@ -501,6 +516,30 @@ fn export_invite(
 
     Ok(())
 }
+
+fn export_vanilla(
+    iface: &Interface,
+    opts: &Opts,
+    output: PathBuf,
+    yes: bool,
+) -> Result<(), Error> {
+    let config = InterfaceConfig::get_path(&opts.config_dir, iface);
+
+    if !config.exists() {
+        bail!(
+            "No network named \"{}\" exists.",
+            iface.as_str_lossy().yellow()
+        );
+    }
+
+    let vanilla: VanillaConfig = InterfaceConfig::from_file(&config)?.try_into()?;
+    vanilla.write_to_path(&output, Some(0o600))?;
+
+    uninstall(iface, opts, yes)?;
+
+    Ok(())
+}
+
 
 fn redeem_invite(
     iface: &InterfaceName,
@@ -1272,11 +1311,11 @@ fn run(opts: &Opts) -> Result<(), Error> {
             install_opts,
             nat,
         } => install(opts, &invite, hosts.into(), install_opts, &nat)?,
-        Command::Export {
+        Command::VanillaRedeem {
             invite,
             delete_invite,
             config,
-        } => export_invite(opts, &invite, config, delete_invite)?,
+        } => vanilla_invite(opts, &invite, config, delete_invite)?,
         Command::Show {
             short,
             tree,
@@ -1301,6 +1340,7 @@ fn run(opts: &Opts) -> Result<(), Error> {
             &nat,
         )?,
         Command::Down { interface } => wg::down(&interface, opts.network.backend)?,
+        Command::VanillaExport { interface, yes, config } => export_vanilla(&interface, opts, config, yes)?,
         Command::Uninstall { interface, yes } => uninstall(&interface, opts, yes)?,
         Command::AddPeer {
             interface,

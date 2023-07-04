@@ -80,6 +80,19 @@ impl From<SocketAddr> for Endpoint {
     }
 }
 
+impl Into<SocketAddr> for Endpoint {
+    fn into(self) -> SocketAddr {
+        match self.host {
+            Host::Ipv4(ip) => SocketAddr::new(IpAddr::V4(ip), self.port),
+            Host::Ipv6(ip) => SocketAddr::new(IpAddr::V6(ip), self.port),
+            Host::Domain(ref domain) => {
+                let mut addrs = domain.to_socket_addrs().unwrap();
+                addrs.next().unwrap()
+            },
+        }
+    }
+}
+
 impl FromStr for Endpoint {
     type Err = &'static str;
 
