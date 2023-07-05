@@ -1,5 +1,4 @@
 use std::{ffi::NulError, fmt};
-use serde::Serialize;
 
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -29,7 +28,7 @@ impl From<NulError> for InvalidKey {
 ///
 /// This means that you need to be careful when working with
 /// `Key`s, especially ones created from external data.
-#[derive(PartialEq, Eq, Clone, Serialize)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Key(pub [u8; 32]);
 
 impl Key {

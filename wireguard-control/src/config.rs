@@ -1,7 +1,6 @@
 use crate::{
-    device::{AllowedIp, PeerConfig, PeerInfo, Device, InterfaceName},
+    device::{AllowedIp, PeerConfig},
     key::Key,
-    Backend,
 };
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -177,101 +176,6 @@ impl PeerConfigBuilder {
     #[must_use]
     pub fn remove(mut self) -> Self {
         self.remove_me = true;
-        self
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct DeviceBuilder {
-    pub(crate) name: InterfaceName,
-    pub(crate) public_key: Option<Key>,
-    pub(crate) private_key: Option<Key>,
-    pub(crate) fwmark: Option<u32>,
-    pub(crate) listen_port: Option<u16>,
-    pub(crate) peers: Vec<PeerInfo>,
-    pub(crate) linked_name: Option<String>,
-    pub(crate) backend: Backend,
-}
-
-impl DeviceBuilder {
-    /// Creates a new `DeviceBuilder` that does nothing when applied.
-    pub fn new(name: &InterfaceName) -> Self {
-        DeviceBuilder {
-            name: name.clone(),
-            public_key: None,
-            private_key: None,
-            fwmark: None,
-            listen_port: None,
-            peers: vec![],
-            linked_name: None,
-            backend: Backend::default(),
-        }
-    }
-
-    pub fn into_device(self) -> Device {
-        Device {
-            name: self.name,
-            public_key: self.public_key,
-            private_key: self.private_key,
-            fwmark: self.fwmark,
-            listen_port: self.listen_port,
-            peers: self.peers,
-            linked_name: self.linked_name,
-            backend: self.backend,
-            __cant_construct_me: (),
-        }
-    }
-
-    pub fn from_device_config(config: Device) -> Self {
-        let mut builder = Self::new(&config.name);
-        if let Some(k) = config.public_key {
-            builder = builder.set_public_key(k);
-        }
-        if let Some(k) = config.private_key {
-            builder = builder.set_private_key(k);
-        }
-        if let Some(f) = config.fwmark {
-            builder = builder.set_fwmark(f);
-        }
-        if let Some(l) = config.listen_port {
-            builder = builder.set_listen_port(l);
-        }
-        builder = builder.set_peers(&config.peers);
-        if let Some(l) = config.linked_name {
-            builder = builder.set_linked_name(l);
-        }
-        builder
-    }
-
-    /// Specifies a public key to be set for this device.
-    #[must_use]
-    pub fn set_public_key(mut self, key: Key) -> Self {
-        self.public_key = Some(key);
-        self
-    }
-
-    pub fn set_private_key(mut self, key: Key) -> Self {
-        self.private_key = Some(key);
-        self
-    }
-
-    pub fn set_fwmark(mut self, fwmark: u32) -> Self {
-        self.fwmark = Some(fwmark);
-        self
-    }
-
-    pub fn set_listen_port(mut self, port: u16) -> Self {
-        self.listen_port = Some(port);
-        self
-    }
-
-    pub fn set_peers(mut self, peers: &[PeerInfo]) -> Self {
-        self.peers = peers.to_vec();
-        self
-    }
-
-    pub fn set_linked_name(mut self, name: String) -> Self {
-        self.linked_name = Some(name);
         self
     }
 }

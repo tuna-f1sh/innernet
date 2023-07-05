@@ -499,7 +499,7 @@ fn vanilla_invite(
     })?;
 
     let vanilla: VanillaConfig = config.try_into()?;
-    vanilla.write_to_path(&target_conf, Some(0o600))?;
+    vanilla.write_to_path(&target_conf, true, Some(0o600))?;
 
     if delete_invite
         || Confirm::with_theme(&*prompts::THEME)
@@ -532,10 +532,22 @@ fn export_vanilla(
         );
     }
 
-    let vanilla: VanillaConfig = InterfaceConfig::from_file(&config)?.try_into()?;
-    vanilla.write_to_path(&output, Some(0o600))?;
+    if yes
+        || Confirm::with_theme(&*prompts::THEME)
+            .with_prompt(&format!(
+                "Export AND uninstall network \"{}\"? One will need to manually update any changes to the client following this",
+                iface.as_str_lossy().yellow()
+            ))
+            .default(false)
+            .wait_for_newline(true)
+            .interact()?
+    {
+        let vanilla: VanillaConfig = InterfaceConfig::from_file(&config)?.try_into()?;
+        vanilla.write_to_path(&output, true, Some(0o600))?;
 
-    uninstall(iface, opts, yes)?;
+        // TODO: could we keep it for updating but invalidate it for up/down?
+        uninstall(iface, opts, yes)?;
+    }
 
     Ok(())
 }

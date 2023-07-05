@@ -6,10 +6,9 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     net::SocketAddr,
-    str::FromStr,
     path::{Path, PathBuf},
 };
-use wireguard_control::{InterfaceName, PeerConfigBuilder, DeviceBuilder, PeerConfig, Device};
+use wireguard_control::InterfaceName;
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(rename_all = "kebab-case")]
@@ -23,22 +22,18 @@ pub struct InterfaceConfig {
 
 #[derive(Clone, Serialize, Debug)]
 #[serde(rename_all = "PascalCase")]
+/// Configuration for a vanilla WireGuard client
 pub struct VanillaConfig {
-    pub interface: Device,
-    pub peer: PeerConfig,
+    pub interface: VanillaInterface,
+    pub peer: VanillaPeer,
 }
 
-impl TryFrom<InterfaceConfig> for VanillaConfig {
-    type Error = Error;
-
-    fn try_from(config: InterfaceConfig) -> Result<Self, Self::Error> {
-        let interface = DeviceBuilder::try_from(&config.interface)?;
-        let peer = PeerConfigBuilder::try_from(&config.server)?;
-
-        Ok(VanillaConfig {
-            interface: interface.into_device(),
-            peer: peer.into_peer_config(),
-        })
+impl From<InterfaceConfig> for VanillaConfig {
+    fn from(config: InterfaceConfig) -> Self {
+        VanillaConfig {
+            interface: VanillaInterface::from(&config.interface),
+            peer: VanillaPeer::from(&config.server),
+        }
     }
 }
 
@@ -59,15 +54,26 @@ pub struct InterfaceInfo {
     pub listen_port: Option<u16>,
 }
 
-impl TryFrom<&InterfaceInfo> for DeviceBuilder {
-    type Error = Error;
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+/// Interface information for a vanilla WireGuard client
+pub struct VanillaInterface {
+    /// The invited peer's internal IP address that's been allocated to it, inside
+    /// the entire network's CIDR prefix.
+    address: IpNet,
+    /// The WireGuard private key (base64)
+    private_key: String,
+    /// The local listen port. A random port will be used if 0.
+    listen_port: u16,
+}
 
-    fn try_from(interface: &InterfaceInfo) -> Result<Self, Self::Error> {
-        let mut builder = DeviceBuilder::new(&InterfaceName::from_str(&interface.network_name)?);
-        builder = builder.set_private_key(wireguard_control::Key::from_base64(&interface.private_key)?);
-        builder = builder.set_listen_port(interface.listen_port.unwrap_or(0));
-
-        Ok(builder)
+impl From<&InterfaceInfo> for VanillaInterface {
+    fn from(interface: &InterfaceInfo) -> Self {
+        VanillaInterface {
+            address: interface.address,
+            private_key: interface.private_key.clone(),
+            listen_port: interface.listen_port.unwrap_or(0),
+        }
     }
 }
 
@@ -84,15 +90,30 @@ pub struct ServerInfo {
     pub internal_endpoint: SocketAddr,
 }
 
-impl TryFrom<&ServerInfo> for PeerConfigBuilder {
-    type Error = Error;
+#[derive(Clone, Serialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+/// Server information for the vanilla WireGuard client
+pub struct VanillaPeer {
+    /// The server's public key
+    public_key: String,
+    /// The external internet endpoint to reach the server.
+    endpoint: Endpoint,
+    /// The IP addresses CIDR that this peer is allowed to communicate with, comma separated.
+    allowed_ips: String,
+    /// The persistent keepalive interval in seconds
+    persistent_keepalive: u16,
+}
 
-    fn try_from(server: &ServerInfo) -> Result<Self, Self::Error> {
-        let mut builder = PeerConfigBuilder::new(&wireguard_control::Key::from_base64(&server.public_key)?);
-        builder = builder.set_endpoint(server.external_endpoint.clone().try_into()?);
-        builder = builder.set_persistent_keepalive_interval(PERSISTENT_KEEPALIVE_INTERVAL_SECS);
+impl From<&ServerInfo> for VanillaPeer {
+    fn from(server: &ServerInfo) -> Self {
+        let allowed_ips = format!("{}/32", server.internal_endpoint.ip());
 
-        Ok(builder)
+        VanillaPeer {
+            public_key: server.public_key.clone(),
+            endpoint: server.external_endpoint.clone(),
+            persistent_keepalive: PERSISTENT_KEEPALIVE_INTERVAL_SECS,
+            allowed_ips,
+        }
     }
 }
 
@@ -202,18 +223,26 @@ impl VanillaConfig {
             chmod(target_file, val)?;
         }
 
-        target_file.write_all(toml::to_string(self).unwrap().as_bytes())?;
+        // Remove quotes from the generated TOML because WireGuard uses INI
+        // can't see a nicer way to do this!
+        let mut toml = toml::to_string(self).unwrap();
+        toml = toml.replace('"', "");
+        target_file.write_all(toml.as_bytes())?;
         Ok(())
     }
 
     pub fn write_to_path<P: AsRef<Path>>(
         &self,
         path: P,
+        truncate: bool,
         mode: Option<u32>,
     ) -> Result<(), WrappedIoError> {
         let path = path.as_ref();
+        // this will truncate the file if it already exists
         let mut target_file = OpenOptions::new()
-            .create_new(true)
+            .create(truncate)
+            .truncate(truncate)
+            .create_new(!truncate)
             .write(true)
             .open(path)
             .with_path(path)?;

@@ -1,5 +1,4 @@
 use libc::c_char;
-use serde::Serialize;
 
 use crate::{backends, key::Key, Backend, KeyPair, PeerConfigBuilder};
 
@@ -13,7 +12,7 @@ use std::{
 };
 
 /// Represents an IP address a peer is allowed to have, in CIDR notation.
-#[derive(PartialEq, Eq, Clone, Serialize)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct AllowedIp {
     /// The IP address.
     pub address: IpAddr,
@@ -46,23 +45,18 @@ impl std::str::FromStr for AllowedIp {
 /// Represents a single peer's configuration (i.e. persistent attributes).
 ///
 /// These are the attributes that don't change over time and are part of the configuration.
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
-#[serde(rename_all = "PascalCase", rename = "Peer")]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PeerConfig {
     /// The public key of the peer.
     pub public_key: Key,
     /// The preshared key available to both peers (`None` means no PSK is used).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub preshared_key: Option<Key>,
     /// The endpoint this peer listens for connections on (`None` means any).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<SocketAddr>,
     /// The interval for sending keepalive packets (`None` means disabled).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub persistent_keepalive_interval: Option<u16>,
     /// The IP addresses this peer is allowed to have.
     pub allowed_ips: Vec<AllowedIp>,
-    #[serde(skip)]
     pub(crate) __cant_construct_me: (),
 }
 
@@ -96,40 +90,32 @@ pub struct PeerInfo {
 /// and the current configuration _and_ state of all of its peers.
 /// The peer statistics are retrieved once at construction time,
 /// and need to be updated manually by calling [`get_by_name`](DeviceInfo::get_by_name).
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
-#[serde(rename_all = "PascalCase", rename = "Interface")]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Device {
     /// The interface name of this device
     pub name: InterfaceName,
     /// The public encryption key of this interface (if present)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Key>,
     /// The private encryption key of this interface (if present)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub private_key: Option<Key>,
     /// The [fwmark](https://www.linux.org/docs/man8/tc-fw.html) of this interface
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fwmark: Option<u32>,
     /// The port to listen for incoming connections on
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub listen_port: Option<u16>,
     /// The list of all registered peers and their information
-    #[serde(skip)]
     pub peers: Vec<PeerInfo>,
     /// The associated "real name" of the interface (ex. "utun8" on macOS).
-    #[serde(skip)]
     pub linked_name: Option<String>,
     /// The backend the device exists on (userspace or kernel).
-    #[serde(skip)]
     pub backend: Backend,
-    #[serde(skip)]
-    pub __cant_construct_me: (),
+
+    pub(crate) __cant_construct_me: (),
 }
 
 type RawInterfaceName = [c_char; libc::IFNAMSIZ];
 
 /// The name of a Wireguard interface device.
-#[derive(PartialEq, Eq, Clone, Copy, Serialize)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct InterfaceName(RawInterfaceName);
 
 impl FromStr for InterfaceName {
