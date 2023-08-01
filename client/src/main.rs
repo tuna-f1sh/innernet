@@ -334,7 +334,17 @@ fn install(
     nat: &NatOpts,
 ) -> Result<(), Error> {
     shared::ensure_dirs_exist(&[&opts.config_dir])?;
-    let config = InterfaceConfig::from_file(invite)?;
+
+    // TODO maybe this is messy and should separate functions
+    let (config, import) = if invite.extension().is_some_and(|e| e == "conf") {
+        let mut vanilla = VanillaConfig::from_file(invite)?;
+        if let Some(ref iface) = install_opts.name {
+            vanilla.set_network_name(iface.to_owned());
+        }
+        (vanilla.to_interface_config()?, true)
+    } else {
+        (InterfaceConfig::from_file(invite)?, false)
+    };
 
     let iface = if install_opts.default_name {
         config.interface.network_name.clone()
@@ -366,15 +376,19 @@ fn install(
         );
     }
 
-    redeem_invite(&iface, config, target_conf, opts.network).map_err(|e| {
-        log::error!("failed to start the interface: {}.", e);
-        log::info!("bringing down the interface.");
-        if let Err(e) = wg::down(&iface, opts.network.backend) {
-            log::warn!("failed to bring down interface: {}.", e.to_string());
-        };
-        log::error!("Failed to redeem invite. Now's a good time to make sure the server is started and accessible!");
-        e
-    })?;
+    if !import {
+        redeem_invite(&iface, config, target_conf, opts.network).map_err(|e| {
+            log::error!("failed to start the interface: {}.", e);
+            log::info!("bringing down the interface.");
+            if let Err(e) = wg::down(&iface, opts.network.backend) {
+                log::warn!("failed to bring down interface: {}.", e.to_string());
+            };
+            log::error!("Failed to redeem invite. Now's a good time to make sure the server is started and accessible!");
+            e
+        })?;
+    } else {
+        config.write_to_path(&target_conf, false, Some(0o600))?;
+    }
 
     let mut fetch_success = false;
     for _ in 0..3 {
