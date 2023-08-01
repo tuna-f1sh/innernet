@@ -545,7 +545,7 @@ fn export_vanilla(
         let vanilla: VanillaConfig = InterfaceConfig::from_file(&config)?.try_into()?;
         vanilla.write_to_path(&output, true, Some(0o600))?;
 
-        // TODO: could we keep it for updating but invalidate it for up/down?
+        // TODO: force yes with `true` not passing option. Could we keep it for updating but invalidate it for up/down?
         uninstall(iface, opts, yes)?;
     }
 
