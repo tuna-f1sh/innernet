@@ -1,4 +1,5 @@
 use crate::{chmod, ensure_dirs_exist, Endpoint, Error, IoErrorContext, WrappedIoError, PERSISTENT_KEEPALIVE_INTERVAL_SECS};
+use regex::Regex;
 use indoc::writedoc;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -281,10 +282,39 @@ impl VanillaConfig {
             .with_path(path)
     }
 
+    fn read_comment_network_name(s: &str) -> Result<String, Error> {
+        let re = Regex::new(r"(?m)^#\s?!network_name,(?P<network>.*)$")?;
+
+        Ok(re
+            .captures(s)
+            .ok_or_else(|| anyhow::anyhow!("Regex matches failed"))?
+            .name("network")
+            .ok_or_else(|| anyhow::anyhow!("No network name found in comments"))?
+            .as_str()
+            .to_string()
+        )
+    }
+
+    fn read_comment_internal_endpoint(s: &str) -> Result<SocketAddr, Error> {
+        let re = Regex::new(r"(?m)^#\s?!internal_endpoint,(?P<endpoint>.*)$")?;
+
+        Ok(re
+            .captures(s)
+            .ok_or_else(|| anyhow::anyhow!("No internal endpoint found in comments"))?
+            .name("endpoint")
+            .ok_or_else(|| anyhow::anyhow!("No internal endpoint found in comments"))?
+            .as_str()
+            .parse()?
+        )
+    }
+
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        Ok(serde_ini::from_str(
-            &std::fs::read_to_string(&path).with_path(path)?,
-        )?)
+        let file_str = std::fs::read_to_string(&path).with_path(path)?;
+        let mut ret: Self = serde_ini::from_str(&file_str)?;
+        ret.interface.network_name = Self::read_comment_network_name(&file_str).ok();
+        ret.peer.internal_endpoint = Self::read_comment_internal_endpoint(&file_str).ok();
+
+        Ok(ret)
     }
 
     pub fn set_network_name(&mut self, network_name: String) {
@@ -307,7 +337,7 @@ impl VanillaConfig {
                 0 => None,
                 n => Some(n),
             },
-            address: self.interface.address.clone(),
+            address: self.interface.address,
         };
 
         let server = ServerInfo {
@@ -371,6 +401,8 @@ PersistentKeepalive = 25"#;
     #[test]
     fn deserialize_vanilla_config_interface() {
         let mut config: VanillaConfig = serde_ini::from_str(VANILLA_CONF).unwrap();
+        config.interface.network_name = VanillaConfig::read_comment_network_name(VANILLA_CONF).ok();
+        config.peer.internal_endpoint = VanillaConfig::read_comment_internal_endpoint(VANILLA_CONF).ok();
 
         assert_eq!(config.interface.private_key, "SH5Opig14+WK3tNApHIfP++hq1Dn+W7S3+qj0YJNQmw=");
         assert_eq!(config.interface.listen_port, 0);
@@ -378,8 +410,10 @@ PersistentKeepalive = 25"#;
         assert_eq!(config.peer.endpoint, Endpoint::from_str("165.12.32.3:5555").unwrap());
         assert_eq!(config.peer.allowed_ips, "10.1.2.1/32");
         assert_eq!(config.peer.persistent_keepalive, 25);
-        config.set_network_name("test".to_string());
-        config.set_internal_endpoint(SocketAddr::from_str("10.1.2.1:5555").unwrap());
+
+        // should have read from comments
+        assert!(config.interface.network_name.is_some());
+        assert!(config.peer.internal_endpoint.is_some());
 
         let inner_config = config.to_interface_config();
         assert!(inner_config.is_ok());

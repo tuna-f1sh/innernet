@@ -535,7 +535,7 @@ fn export_vanilla(
     if yes
         || Confirm::with_theme(&*prompts::THEME)
             .with_prompt(&format!(
-                "Export AND uninstall network \"{}\"? One will need to manually update any changes to the client following this",
+                "Export AND uninstall network \"{}\"? One will need to manually update any changes to the client or re-import following this",
                 iface.as_str_lossy().yellow()
             ))
             .default(false)
@@ -543,7 +543,7 @@ fn export_vanilla(
             .interact()?
     {
         let vanilla: VanillaConfig = InterfaceConfig::from_file(&config)?.try_into()?;
-        vanilla.write_to_path(&output, true, Some(0o600))?;
+        vanilla.write_to_path(output, true, Some(0o600))?;
 
         // TODO: force yes with `true` not passing option. Could we keep it for updating but invalidate it for up/down?
         uninstall(iface, opts, yes)?;
@@ -551,7 +551,6 @@ fn export_vanilla(
 
     Ok(())
 }
-
 
 fn redeem_invite(
     iface: &InterfaceName,
